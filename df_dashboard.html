@@ -456,6 +456,9 @@ body::before{
       <button class="icon-btn" onclick="triggerRestore()" title="Restore">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       </button>
+      <button class="icon-btn" onclick="openSettings()" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
       <input type="file" id="restore-file" accept=".json" style="display:none" onchange="restoreData(event)">
     </div>
   </div>
@@ -639,6 +642,31 @@ body::before{
       <button class="btn-primary" onclick="saveInvest()">บันทึก</button>
       <button class="btn-danger" id="btn-del-inv" onclick="confirmDeleteInvest()" style="display:none">ลบสินทรัพย์นี้</button>
       <button class="btn-secondary" onclick="closeModal('modal-invest')">ยกเลิก</button>
+    </div>
+  </div>
+
+  <!-- MODAL: SETTINGS -->
+  <div class="modal-overlay" id="modal-settings">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-title">⚙ Settings</div>
+
+      <label class="form-label">Anthropic API Key</label>
+      <input type="password" class="form-input" id="set-api-key" placeholder="sk-ant-api03-..." autocomplete="off">
+      <div style="font-size:11px;color:var(--text3);margin:-8px 0 14px;line-height:1.5">
+        🔒 เก็บใน localStorage เครื่องนี้เท่านั้น ไม่ส่งไปไหน<br>
+        🔑 สร้าง key ที่ <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--indigo)">console.anthropic.com</a>
+      </div>
+
+      <label class="form-label">Model</label>
+      <select class="form-select" id="set-model">
+        <option value="claude-haiku-4-5">Claude Haiku 4.5 (เร็ว/ถูก — แนะนำ)</option>
+        <option value="claude-sonnet-4-5">Claude Sonnet 4.5 (สมดุล)</option>
+        <option value="claude-opus-4-5">Claude Opus 4.5 (ฉลาดสุด/แพง)</option>
+      </select>
+
+      <button class="btn-primary" onclick="saveSettings()">บันทึก</button>
+      <button class="btn-secondary" onclick="closeModal('modal-settings')">ยกเลิก</button>
     </div>
   </div>
 
@@ -1163,13 +1191,21 @@ async function sendAI(customMsg){
   const input = document.getElementById('ai-input');
   const msg = customMsg || input.value.trim();
   if(!msg) return;
+
+  // Check API key
+  const apiKey = localStorage.getItem('anthropic_api_key');
+  if(!apiKey){
+    toast('🔑 กรุณาตั้งค่า API key ก่อน');
+    setTimeout(()=>openSettings(), 400);
+    return;
+  }
+
   input.value = '';
+  const model = localStorage.getItem('anthropic_model') || 'claude-haiku-4-5';
 
   const msgEl = document.getElementById('ai-messages');
-  // Add user bubble
   msgEl.innerHTML += `<div class="ai-msg user"><div class="ai-bubble">${msg}</div></div>`;
 
-  // Add thinking bubble
   const thinkId = 'think_' + Date.now();
   msgEl.innerHTML += `<div class="ai-msg assistant thinking" id="${thinkId}"><div class="ai-bubble">กำลังวิเคราะห์...</div></div>`;
   msgEl.scrollTop = msgEl.scrollHeight;
@@ -1188,23 +1224,53 @@ ${buildDataContext()}
   try{
     const res = await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
       body: JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:1000,
+        model: model,
+        max_tokens: 1000,
         system: systemPrompt,
         messages: aiHistory,
       })
     });
     const json = await res.json();
-    const reply = json.content?.[0]?.text || 'ไม่ได้รับคำตอบ';
-    aiHistory.push({role:'assistant', content: reply});
-    document.getElementById(thinkId).outerHTML = `<div class="ai-msg assistant"><div class="ai-bubble">${reply}</div></div>`;
+    if(json.error){
+      const errMsg = json.error.message || 'API error';
+      document.getElementById(thinkId).outerHTML = `<div class="ai-msg assistant"><div class="ai-bubble">❌ ${errMsg}</div></div>`;
+      aiHistory.pop(); // remove the user msg from history since it failed
+    } else {
+      const reply = json.content?.[0]?.text || 'ไม่ได้รับคำตอบ';
+      aiHistory.push({role:'assistant', content: reply});
+      document.getElementById(thinkId).outerHTML = `<div class="ai-msg assistant"><div class="ai-bubble">${reply}</div></div>`;
+    }
   } catch(e){
-    document.getElementById(thinkId).outerHTML = `<div class="ai-msg assistant"><div class="ai-bubble">❌ เชื่อมต่อ AI ไม่สำเร็จ กรุณาลองใหม่</div></div>`;
+    document.getElementById(thinkId).outerHTML = `<div class="ai-msg assistant"><div class="ai-bubble">❌ เชื่อมต่อ AI ไม่สำเร็จ: ${e.message||'Network error'}</div></div>`;
+    aiHistory.pop();
   }
   btn.disabled = false;
   msgEl.scrollTop = msgEl.scrollHeight;
+}
+
+// ══════════════════════════════════════════════
+// SETTINGS
+// ══════════════════════════════════════════════
+function openSettings(){
+  document.getElementById('set-api-key').value = localStorage.getItem('anthropic_api_key') || '';
+  document.getElementById('set-model').value = localStorage.getItem('anthropic_model') || 'claude-haiku-4-5';
+  openModal('modal-settings');
+}
+function saveSettings(){
+  const key = document.getElementById('set-api-key').value.trim();
+  const model = document.getElementById('set-model').value;
+  if(key) localStorage.setItem('anthropic_api_key', key);
+  else localStorage.removeItem('anthropic_api_key');
+  localStorage.setItem('anthropic_model', model);
+  closeModal('modal-settings');
+  toast(key ? '✅ บันทึก API key แล้ว' : '🗑 ลบ API key แล้ว');
 }
 
 function askPreset(el){
