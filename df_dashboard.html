@@ -688,7 +688,36 @@ body::before{
 // ══════════════════════════════════════════════
 // DATA & MONTHS
 // ══════════════════════════════════════════════
-const MONTHS = ['Apr 25','May 25','Jun 25','Jul 25','Aug 25','Sep 25','Oct 25','Nov 25','Dec 25','Jan 26','Feb 26','Mar 26','Apr 26','May 26'];
+// สร้างลิสต์เดือนอัตโนมัติ: เริ่ม Apr 2025 → เดือนปัจจุบัน + เผื่อ 2 เดือนข้างหน้า
+// (และถ้ามีข้อมูลในเดือนที่เลยไปกว่านั้น ก็จะครอบให้ครบ)
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function mkMonth(y, m){ return MONTH_ABBR[m] + ' ' + String(y).slice(-2); } // m = 0-11
+function buildMonths(){
+  const startY = 2025, startM = 3; // Apr 2025 (m=3)
+  const now = new Date();
+  // ปลายทาง = เดือนปัจจุบัน + 2 เดือน
+  let endY = now.getFullYear(), endM = now.getMonth() + 2;
+  while(endM > 11){ endM -= 12; endY++; }
+  // ถ้ามีข้อมูลเดือนที่เลย endY/endM ไปอีก ให้ขยายปลายทางตาม
+  try {
+    const keys = Object.keys((data&&data.dfData)||{}).concat(Object.keys((data&&data.expData)||{}));
+    keys.forEach(k=>{
+      const mi = MONTH_ABBR.indexOf((k.split(' ')[0]||''));
+      const yy = 2000 + parseInt(k.split(' ')[1],10);
+      if(mi>=0 && !isNaN(yy)){
+        if(yy>endY || (yy===endY && mi>endM)){ endY=yy; endM=mi; }
+      }
+    });
+  } catch(e){}
+  const out = [];
+  let y = startY, m = startM;
+  while(y < endY || (y === endY && m <= endM)){
+    out.push(mkMonth(y, m));
+    m++; if(m > 11){ m = 0; y++; }
+  }
+  return out;
+}
+let MONTHS = buildMonths();
 
 const SEED_INVEST = [
   {id:'inv1',type:'crypto',symbol:'bitcoin',name:'BTC',qty:0,avgPrice:0,currency:'THB',note:''},
@@ -730,6 +759,10 @@ function loadData(){
   // Merge missing seed invest items
   const have = new Set(data.investData.map(h=>h.symbol));
   SEED_INVEST.forEach(s=>{ if(!have.has(s.symbol)) data.investData.push(deepClone(s)); });
+  // ขยายลิสต์เดือนให้ครอบข้อมูลที่มีจริง แล้วตั้ง curMonth เป็นเดือนปัจจุบัน (ถ้ามีในลิสต์)
+  MONTHS = buildMonths();
+  const nowKey = mkMonth(new Date().getFullYear(), new Date().getMonth());
+  curMonth = MONTHS.includes(nowKey) ? nowKey : MONTHS[MONTHS.length - 1];
 }
 function saveData(){
   localStorage.setItem('df_data_v2', JSON.stringify(data));
@@ -1511,18 +1544,36 @@ async function fetchPrices(silent){
       } catch(e){console.warn('crypto fail',e);}
     }
     const rate=data.usdThbRate||36;
-    await Promise.all([...stocks].map(async sym=>{
-      try{
-        const yUrl='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(sym);
-        const r=await fetch('https://corsproxy.io/?'+encodeURIComponent(yUrl));
-        const d=await r.json();
-        const meta=d?.chart?.result?.[0]?.meta;
-        if(!meta) throw new Error('no meta');
-        const p=meta.regularMarketPrice;
-        const cur=meta.currency||'USD';
-        data.priceCache[sym]={thb:cur==='USD'?p*rate:p,usd:cur==='USD'?p:p/rate,native:p,cur,t:Date.now()};
-      } catch(e){console.warn('stock fail',sym,e);}
-    }));
+    // ลอง proxy หลายตัวไล่ทีละตัว เผื่อตัวใดล่ม/โดน rate-limit
+    const PROXIES=[
+      u=>'https://corsproxy.io/?url='+encodeURIComponent(u),
+      u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+      u=>'https://thingproxy.freeboard.io/fetch/'+u,
+    ];
+    async function fetchStock(sym){
+      const yUrl='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(sym);
+      let lastErr;
+      for(const mk of PROXIES){
+        try{
+          const r=await fetch(mk(yUrl));
+          if(!r.ok) throw new Error('HTTP '+r.status);
+          const d=await r.json();
+          const meta=d?.chart?.result?.[0]?.meta;
+          if(!meta||meta.regularMarketPrice==null) throw new Error('no meta');
+          const p=meta.regularMarketPrice;
+          const cur=meta.currency||'USD';
+          data.priceCache[sym]={thb:cur==='USD'?p*rate:p,usd:cur==='USD'?p:p/rate,native:p,cur,t:Date.now()};
+          return true;
+        } catch(e){ lastErr=e; }
+      }
+      console.warn('stock fail',sym,lastErr); // ถ้าทุก proxy ล่ม คงราคาเดิมใน cache ไว้
+      return false;
+    }
+    // ยิงทีละตัว มีหน่วงเล็กน้อย กันโดน rate-limit
+    for(const sym of stocks){
+      await fetchStock(sym);
+      await new Promise(r=>setTimeout(r,150));
+    }
     saveData();
     if(curTab==='invest') renderInvestTab();
     if(!silent) toast('✅ อัปเดตราคาแล้ว');
