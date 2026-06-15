@@ -113,6 +113,12 @@ body::before{
   box-shadow:0 0 16px rgba(99,102,241,0.35);
 }
 .month-chip.no-data{opacity:0.3;font-style:italic}
+.month-chip.month-add{
+  width:30px;padding:0;display:flex;align-items:center;justify-content:center;
+  font-size:18px;font-weight:400;color:var(--text2);
+  border-style:dashed;opacity:1;font-style:normal;
+}
+.month-chip.month-add:hover{color:#fff;border-color:rgba(99,102,241,0.6)}
 
 /* ── CONTENT ── */
 #content{flex:1;overflow:hidden;position:relative}
@@ -671,6 +677,26 @@ body::before{
     </div>
   </div>
 
+  <!-- MODAL: ADD MONTH -->
+  <div class="modal-overlay" id="modal-addmonth">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-title">เพิ่มเดือน</div>
+      <div class="form-row">
+        <div>
+          <label class="form-label">เดือน</label>
+          <select class="form-select" id="addmonth-month"></select>
+        </div>
+        <div>
+          <label class="form-label">ปี</label>
+          <select class="form-select" id="addmonth-year"></select>
+        </div>
+      </div>
+      <button class="btn-primary" onclick="saveAddMonth()">เพิ่ม</button>
+      <button class="btn-secondary" onclick="closeModal('modal-addmonth')">ยกเลิก</button>
+    </div>
+  </div>
+
   <!-- MODAL: CONFIRM -->
   <div class="modal-overlay" id="modal-confirm">
     <div class="modal-sheet">
@@ -700,7 +726,9 @@ function buildMonths(){
   while(endM > 11){ endM -= 12; endY++; }
   // ถ้ามีข้อมูลเดือนที่เลย endY/endM ไปอีก ให้ขยายปลายทางตาม
   try {
-    const keys = Object.keys((data&&data.dfData)||{}).concat(Object.keys((data&&data.expData)||{}));
+    const keys = Object.keys((data&&data.dfData)||{})
+      .concat(Object.keys((data&&data.expData)||{}))
+      .concat((data&&data.extraMonths)||[]);
     keys.forEach(k=>{
       const mi = MONTH_ABBR.indexOf((k.split(' ')[0]||''));
       const yy = 2000 + parseInt(k.split(' ')[1],10);
@@ -755,6 +783,7 @@ function loadData(){
   if(!data.expData) data.expData = {};
   if(!data.investData) data.investData = deepClone(SEED_INVEST);
   if(!data.priceCache) data.priceCache = {};
+  if(!Array.isArray(data.extraMonths)) data.extraMonths = [];
   if(!data.usdThbRate) data.usdThbRate = 36;
   // Merge missing seed invest items
   const have = new Set(data.investData.map(h=>h.symbol));
@@ -857,7 +886,7 @@ function renderMonthBar(){
   bar.innerHTML = MONTHS.map(m=>{
     const hasData = (data.dfData[m]||[]).length>0 || (data.expData[m]||[]).length>0;
     return `<div class="month-chip${m===curMonth?' active':''}${!hasData?' no-data':''}" onclick="selectMonth('${m}')">${m}</div>`;
-  }).join('');
+  }).join('') + `<div class="month-chip month-add" onclick="openAddMonthModal()" title="เพิ่มเดือน">＋</div>`;
   // scroll active into view
   setTimeout(()=>{
     const active = bar.querySelector('.active');
@@ -865,6 +894,41 @@ function renderMonthBar(){
   },50);
 }
 function selectMonth(m){ curMonth=m; renderMonthBar(); renderCurrentTab(); }
+
+// ── เพิ่มเดือน/ปีเอง (default = เดือนถัดจากเดือนล่าสุด) ──
+function nextMonthAfterLatest(){
+  // เดือนล่าสุดในลิสต์
+  const last = MONTHS[MONTHS.length-1];
+  let mi = MONTH_ABBR.indexOf(last.split(' ')[0]);
+  let yy = 2000 + parseInt(last.split(' ')[1],10);
+  mi++; if(mi>11){ mi=0; yy++; }
+  return {m:mi, y:yy};
+}
+function openAddMonthModal(){
+  const def = nextMonthAfterLatest();
+  const mSel = document.getElementById('addmonth-month');
+  const ySel = document.getElementById('addmonth-year');
+  mSel.innerHTML = MONTH_ABBR.map((mm,i)=>`<option value="${i}">${mm}</option>`).join('');
+  const baseY = new Date().getFullYear();
+  let years = [];
+  for(let y=2025; y<=Math.max(baseY+3, def.y+1); y++) years.push(y);
+  ySel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join('');
+  mSel.value = def.m;
+  ySel.value = def.y;
+  openModal('modal-addmonth');
+}
+function saveAddMonth(){
+  const mi = parseInt(document.getElementById('addmonth-month').value,10);
+  const yy = parseInt(document.getElementById('addmonth-year').value,10);
+  const key = mkMonth(yy, mi);
+  if(!Array.isArray(data.extraMonths)) data.extraMonths = [];
+  if(!data.extraMonths.includes(key)) data.extraMonths.push(key);
+  saveData();
+  MONTHS = buildMonths();
+  closeModal('modal-addmonth');
+  selectMonth(key); // เด้งไปเดือนที่เพิ่งเพิ่มทันที
+  toast('✅ เพิ่มเดือน ' + key);
+}
 function renderAll(){ renderMonthBar(); renderCurrentTab(); }
 function renderCurrentTab(){
   if(curTab==='df') renderDfTab();
